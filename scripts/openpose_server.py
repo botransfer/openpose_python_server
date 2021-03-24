@@ -11,10 +11,8 @@ import os
 import cv2
 from flask import Flask, request, redirect, jsonify
 from flask import send_file
-from werkzeug import secure_filename
-from pykakasi import kakasi
 
-from openpose import *
+import pyopenpose as op
 
 class OpenPoseServer(Flask):
     def __init__(self, host, name, upload_dir, extensions, model_dir):
@@ -25,9 +23,8 @@ class OpenPoseServer(Flask):
         self.host = host
         self.config['UPLOAD_FOLDER'] = upload_dir
         self.extensions = extensions
-        # self.pose_detector = pose_detector
+        self.pose_detector = None
         self.model_dir = model_dir
-        self.converter = None
         self.define_uri()
 
     def define_uri(self):
@@ -36,21 +33,6 @@ class OpenPoseServer(Flask):
         """
         self.provide_automatic_option = False
         self.add_url_rule('/get_predict_image', None, self.get_predict_image, methods = ['POST'])
-
-    def setup_converter(self):
-        """
-        """
-        mykakasi = kakasi()
-        mykakasi.setMode('H', 'a')
-        mykakasi.setMode('K', 'a')
-        mykakasi.setMode('J', 'a')
-        self.converter = mykakasi.getConverter()
-
-    def convert_filename(self, filename):
-        """
-        converting filename using pykakasi
-        """
-        return self.converter.do(filename)
 
     def check_allowfile(self, filename):
         """
@@ -72,22 +54,22 @@ class OpenPoseServer(Flask):
             file = request.files['file']
             if file and self.check_allowfile(file.filename):
                 print("receive the file, the filename is %s" % file.filename)
-                output_filename = "%s_%s" % (datetime.datetime.now().strftime("%Y%m%d_%H%M%S"), self.convert_filename(file.filename))
+                output_filename = "%s_%s" % (datetime.datetime.now().strftime("%Y%m%d_%H%M%S"), file.filename)
                 print("output filename is %s" % output_filename)
                 outputfilepath = os.path.join(self.config['UPLOAD_FOLDER'], output_filename)
                 file.save(outputfilepath)
     
-                try:
-                    img = cv2.imread(outputfilepath)
-                except Exception as err:
-                    print(err)
+                if self.pose_detector is None:
+                    self.pose_detector = create_openpose_instance(self.model_dir)
+                po = self.pose_detector
 
-                try:
-                    pose_detector = create_openpose_instance(self.model_dir)
-                    _, pred_img  = pose_detector.forward(img, True)
-                except Exception as err:
-                    print(err)
+                datum = op.Datum()
+                img = cv2.imread(outputfilepath)
+                datum.cvInputData = img
 
+                po.emplaceAndPop([datum])
+                pred_img = datum.cvOutputData
+                
                 tmpfilename = output_filename.split(os.path.sep)[-1]
                 pred_outputfilename = "%s_pred.jpg" % tmpfilename.split('.')[0]
                 pred_img_outputfilepath = os.path.join(self.config['UPLOAD_FOLDER'], pred_outputfilename)
@@ -139,6 +121,7 @@ def create_openpose_instance(model_dir):
     creating openpose instance
     """
 
+    print("creating instance")
     try:
         params = dict()
         params["logging_level"] = 3
@@ -153,9 +136,13 @@ def create_openpose_instance(model_dir):
         params["num_gpu_start"] = 0
         params["disable_blending"] = False
         # Ensure you point to the correct path where models are located
-        params["default_model_folder"] = model_dir
+        params["model_folder"] = model_dir
+
         # Construct OpenPose object allocates GPU memory
-        openpose = OpenPose(params)
+        openpose = op.WrapperPython()
+        openpose.configure(params)
+        openpose.start()
+
         return openpose
     except Exception as err:
         print(err)
@@ -184,7 +171,6 @@ def main():
     
 
     server = OpenPoseServer(host, 'openpose_server', upload_dir, ['jpg', 'png'], model_dir)
-    server.setup_converter()
     print("server run")
     server.run(host=host, port=port)
 

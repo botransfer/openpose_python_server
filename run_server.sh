@@ -1,1 +1,1 @@
-PYTHONPATH=/usr/local/python/openpose python3 scripts/openpose_server.py -cf config/openpose_server.ini
+PYTHONPATH=/usr/local/python python3 scripts/openpose_server.py -cf config/openpose_server.ini
